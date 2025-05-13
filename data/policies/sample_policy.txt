@@ -1,0 +1,25 @@
+# AI Usage Policy
+
+## Data Privacy
+1. User data must never be stored longer than necessary for the specific task.
+2. Personal identifiable information (PII) must be anonymized before processing.
+3. Data access must be logged and auditable.
+4. User consent must be obtained before processing any personal data.
+
+## Content Moderation
+1. Generated content must not contain hate speech, discrimination, or harassment.
+2. Violence or threats of violence are prohibited in all generated content.
+3. Sexual or explicit content is not permitted unless explicitly requested by an authorized adult user.
+4. Content promoting illegal activities must be blocked.
+
+## Ethical Guidelines
+1. AI responses must be transparent about being AI-generated.
+2. Responses must avoid political bias and present balanced viewpoints.
+3. Medical or legal advice must include disclaimers about not replacing professional consultation.
+4. AI must not impersonate specific individuals without explicit authorization.
+
+## Security Requirements
+1. All API calls must be authenticated with proper credentials.
+2. Rate limiting must be enforced to prevent abuse.
+3. Sensitive operations must use multi-factor authentication.
+4. All data in transit must be encrypted using TLS 1.3 or higher. 
