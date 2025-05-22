@@ -5,6 +5,7 @@ from llama_index.core import Document, VectorStoreIndex
 from llama_index.core.node_parser import SimpleNodeParser
 from llama_index.core.settings import Settings
 from llama_index.core.llms import LLM, ChatMessage, ChatResponse, CompletionResponse, LLMMetadata
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_stack_client import LlamaStackClient
 from llama_stack_client.types import Model
 from pydantic import Field
@@ -58,7 +59,15 @@ class LlamaStackLLM(LLM):
                 {"role": "user", "content": prompt}
             ]
         )
-        return CompletionResponse(text=response.choices[0].message.content)
+        # Handle the response format from LlamaStack
+        if hasattr(response, 'message'):
+            content = response.message.content
+        elif hasattr(response, 'content'):
+            content = response.content
+        else:
+            raise ValueError("Unexpected response format from LlamaStack")
+            
+        return CompletionResponse(text=content)
     
     def stream_complete(self, prompt: str, **kwargs) -> Generator[CompletionResponse, None, None]:
         """Stream complete the prompt using LlamaStack.
@@ -79,8 +88,10 @@ class LlamaStackLLM(LLM):
             stream=True
         )
         for chunk in response:
-            if chunk.choices[0].delta.content:
-                yield CompletionResponse(text=chunk.choices[0].delta.content)
+            if hasattr(chunk, 'delta') and hasattr(chunk.delta, 'content') and chunk.delta.content:
+                yield CompletionResponse(text=chunk.delta.content)
+            elif hasattr(chunk, 'content') and chunk.content:
+                yield CompletionResponse(text=chunk.content)
     
     def chat(self, messages: List[ChatMessage], **kwargs) -> ChatResponse:
         """Chat with the model using LlamaStack.
@@ -96,7 +107,50 @@ class LlamaStackLLM(LLM):
             model_id=self.model_id,
             messages=[{"role": msg.role.value, "content": msg.content} for msg in messages]
         )
-        return ChatResponse(message=ChatMessage(role="assistant", content=response.choices[0].message.content))
+        
+        # Debug logging
+        logger.debug(f"LlamaStack response type: {type(response)}")
+        logger.debug(f"LlamaStack response attributes: {dir(response)}")
+        
+        # Handle the response format from LlamaStack
+        try:
+            if hasattr(response, 'completion_message'):
+                content = response.completion_message.content
+            elif hasattr(response, 'message'):
+                content = response.message.content
+            elif hasattr(response, 'content'):
+                content = response.content
+            elif hasattr(response, 'text'):
+                content = response.text
+            elif hasattr(response, 'response'):
+                content = response.response
+            elif isinstance(response, str):
+                content = response
+            elif isinstance(response, dict):
+                if 'completion_message' in response:
+                    content = response['completion_message'].get('content', '')
+                elif 'message' in response:
+                    content = response['message'].get('content', '')
+                elif 'content' in response:
+                    content = response['content']
+                elif 'text' in response:
+                    content = response['text']
+                elif 'response' in response:
+                    content = response['response']
+                else:
+                    raise ValueError(f"Unexpected response dict format: {response}")
+            else:
+                raise ValueError(f"Unexpected response type: {type(response)}")
+                
+            if not content:
+                raise ValueError("Empty response content")
+                
+            return ChatResponse(message=ChatMessage(role="assistant", content=content))
+            
+        except Exception as e:
+            logger.error(f"Error processing LlamaStack response: {str(e)}")
+            logger.error(f"Response object: {response}")
+            raise ValueError(f"Failed to process LlamaStack response: {str(e)}")
     
     def stream_chat(self, messages: List[ChatMessage], **kwargs) -> Generator[ChatResponse, None, None]:
         """Stream chat with the model using LlamaStack.
@@ -113,9 +167,41 @@ class LlamaStackLLM(LLM):
             messages=[{"role": msg.role.value, "content": msg.content} for msg in messages],
             stream=True
         )
+        
         for chunk in response:
-            if chunk.choices[0].delta.content:
-                yield ChatResponse(message=ChatMessage(role="assistant", content=chunk.choices[0].delta.content))
+            try:
+                content = None
+                if hasattr(chunk, 'completion_message'):
+                    content = chunk.completion_message.content
+                elif hasattr(chunk, 'delta') and hasattr(chunk.delta, 'content'):
+                    content = chunk.delta.content
+                elif hasattr(chunk, 'content'):
+                    content = chunk.content
+                elif hasattr(chunk, 'text'):
+                    content = chunk.text
+                elif hasattr(chunk, 'response'):
+                    content = chunk.response
+                elif isinstance(chunk, str):
+                    content = chunk
+                elif isinstance(chunk, dict):
+                    if 'completion_message' in chunk:
+                        content = chunk['completion_message'].get('content', '')
+                    elif 'delta' in chunk and 'content' in chunk['delta']:
+                        content = chunk['delta']['content']
+                    elif 'content' in chunk:
+                        content = chunk['content']
+                    elif 'text' in chunk:
+                        content = chunk['text']
+                    elif 'response' in chunk:
+                        content = chunk['response']
+                
+                if content:
+                    yield ChatResponse(message=ChatMessage(role="assistant", content=content))
+                    
+            except Exception as e:
+                logger.error(f"Error processing LlamaStack stream chunk: {str(e)}")
+                logger.error(f"Chunk object: {chunk}")
+                continue
     
     async def acomplete(self, prompt: str, **kwargs) -> CompletionResponse:
         """Async complete the prompt using LlamaStack.
@@ -196,6 +282,7 @@ class RagEngine:
         self.llm = llm
         self.index = None
         self._setup_llm()
+        self._setup_embeddings()
     
     def _setup_llm(self):
         """Set up the LLM using LlamaStackClient."""
@@ -218,6 +305,21 @@ class RagEngine:
             
         except ImportError as e:
             logger.error(f"Failed to import llama-stack-client: {e}")
+            raise
+
+    def _setup_embeddings(self):
+        """Set up the embedding model."""
+        try:
+            # Initialize HuggingFace embedding model
+            embed_model = HuggingFaceEmbedding(
+                model_name="BAAI/bge-small-en-v1.5"
+            )
+            
+            # Configure global settings
+            Settings.embed_model = embed_model
+            
+        except ImportError as e:
+            logger.error(f"Failed to import HuggingFace embedding model: {e}")
             raise
     
     def build_index(self):
