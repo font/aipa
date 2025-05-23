@@ -81,5 +81,9 @@ def validate_manifest(manifest_path: str, output: Optional[str]):
     else:
         click.echo(f"\nNo policy violations found in {manifest_path}")
 
+def main():
+    """Main entry point for the CLI."""
+    cli()
+
 if __name__ == '__main__':
-    cli() 
+    main() 
