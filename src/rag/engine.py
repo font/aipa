@@ -1,6 +1,7 @@
 from typing import List, Dict, Any, Optional, AsyncGenerator, Generator, Union
 import logging
 import yaml
+import time
 
 from llama_index.core import Document, VectorStoreIndex
 from llama_index.core.node_parser import SimpleNodeParser
@@ -105,9 +106,10 @@ class K8sPolicyEnforcer:
         
         formatted_manifest = self._format_manifest_for_prompt(manifest)
         
-        # Create query engine
+        # Create query engine with increased timeout and retry settings
         query_engine = self.policy_index.as_query_engine(
             similarity_top_k=config.rag.similarity_top_k,
+            streaming=False,  # Disable streaming for more reliable responses
         )
         
         # Construct prompt for policy enforcement
@@ -128,14 +130,30 @@ Format your response as a list of violations, one per line, with each violation 
 - Severity: [error/warning]
 """
         
-        # Execute query
-        response = query_engine.query(prompt)
+        # Execute query with retry logic
+        max_retries = 3
+        retry_delay = 2  # seconds
+        last_error = None
+        
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Attempting policy validation (attempt {attempt + 1}/{max_retries})")
+                response = query_engine.query(prompt)
+                break
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    logger.warning(f"Attempt {attempt + 1} failed: {str(e)}. Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    logger.error(f"All {max_retries} attempts failed. Last error: {str(e)}")
+                    raise ValueError(f"Failed to validate manifest after {max_retries} attempts: {str(e)}")
         
         # Parse violations from response
         violations = []
         if "No policy violations found" not in str(response):
             # Parse the response to extract violations
-            # This is a simple implementation - you might want to make it more robust
             lines = str(response).split('\n')
             current_violation = {}
             
@@ -511,18 +529,35 @@ class RagEngine:
         # Execute query
         response = query_engine.query(query_text)
         
+        # Debug logging for source nodes
+        logger.debug("Source nodes from response:")
+        for node in getattr(response, "source_nodes", []):
+            logger.debug(f"Node ID: {node.node.node_id}")
+            logger.debug(f"Source: {node.node.metadata.get('source', 'unknown')}")
+            logger.debug(f"Text: {node.node.get_text()[:100]}...")  # First 100 chars
+        
         # Format result and deduplicate sources
-        seen_texts = set()
+        seen_sources = set()
         unique_sources = []
         
         for node in getattr(response, "source_nodes", []):
-            source_text = node.get_text()
-            if source_text not in seen_texts:
-                seen_texts.add(source_text)
+            source_path = node.node.metadata.get("source", "unknown")
+            source_text = node.node.get_text()
+            source_key = f"{source_path}:{source_text}"
+            
+            logger.debug(f"Processing source: {source_path}")
+            logger.debug(f"Source key: {source_key}")
+            logger.debug(f"Already seen: {source_key in seen_sources}")
+            
+            if source_key not in seen_sources:
+                seen_sources.add(source_key)
                 unique_sources.append({
-                    "source": node.metadata.get("source", "unknown"),
+                    "source": source_path,
                     "text": source_text
                 })
+                logger.debug("Added to unique sources")
+            else:
+                logger.debug("Skipped duplicate source")
         
         result = {
             "answer": str(response),
