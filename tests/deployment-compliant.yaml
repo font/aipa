@@ -1,0 +1,63 @@
+# deployment-compliant.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  labels:
+    app: nginx
+    environment: production
+    team: platform
+    cost-center: platform-team
+spec:
+  replicas: 3  # Compliant: More than minimum 2 replicas
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+        environment: production
+        team: platform
+        cost-center: platform-team
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.25.3  # Compliant: Using specific version
+        resources:
+          requests:  # Compliant: Meets minimum requirements
+            cpu: "500m"
+            memory: "512Mi"
+          limits:  # Compliant: Has resource limits
+            cpu: "1000m"
+            memory: "1Gi"
+        securityContext:  # Compliant: Has security context
+          runAsUser: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+        ports:
+        - containerPort: 80
+        livenessProbe:  # Compliant: Has health checks
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:  # Compliant: Has readiness probe
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
