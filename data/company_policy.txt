@@ -23,3 +23,61 @@
 2. Work from public networks requires additional security measures.
 3. Home networks used for work must have WPA2 or better security.
 4. Remote workers must ensure their workspace complies with confidentiality requirements. 
+
+# Kubernetes Policy Rules
+
+## Container Image Registry Policy
+- Only container images from approved registries are allowed
+- Approved registries are:
+  * quay.io
+  * registry.access.redhat.com
+- All container images must be fully qualified (include registry, repository, and tag)
+- Container images must use specific tags, not 'latest'
+- Container images must be scanned for vulnerabilities before deployment
+
+## Resource Limits Policy
+- All containers must have resource requests and limits defined
+- CPU requests must be at least 100m
+- Memory requests must be at least 128Mi
+- CPU limits must not exceed 2 cores
+- Memory limits must not exceed 2Gi
+- Resource requests must not exceed resource limits
+
+## Security Policy
+- All pods must have security contexts defined
+- Containers must not run as root
+- Containers must not have privileged access
+- All pods must have network policies defined
+- All pods must have pod security policies applied
+- All secrets must be stored in Kubernetes secrets, not in environment variables
+
+## Deployment Policy
+- All deployments must have at least 2 replicas for high availability
+- All deployments must have a rolling update strategy
+- All deployments must have resource limits defined
+- All deployments must have health checks (readiness and liveness probes)
+- All deployments must have proper labels and annotations
+
+## Storage Policy
+- All persistent volumes must be backed up
+- All persistent volumes must have proper access modes
+- All persistent volumes must have proper storage class
+- All persistent volumes must have proper size limits
+
+## Network Policy
+- All services must have proper type (ClusterIP, NodePort, or LoadBalancer)
+- All services must have proper ports defined
+- All services must have proper selectors
+- All services must have proper labels and annotations
+
+## Monitoring Policy
+- All pods must have proper logging configuration
+- All pods must have proper metrics exposed
+- All pods must have proper alerting rules
+- All pods must have proper dashboards
+
+## Compliance Policy
+- All resources must have proper labels for cost allocation
+- All resources must have proper labels for environment
+- All resources must have proper labels for team ownership
+- All resources must have proper labels for compliance requirements
