@@ -1,79 +1,85 @@
-import argparse
-import json
-import logging
-import sys
+#!/usr/bin/env python3
+"""Command-line interface for the policy engine."""
 
-from src.rag.engine import rag_engine
+import logging
+import click
+import yaml
+from pathlib import Path
+from typing import Optional
+
+from src.rag.engine import RagEngine, K8sPolicyEnforcer
 from src.core.config import config
 
 # Configure logging
-logging.basicConfig(
-    level=logging.DEBUG if config.debug else logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+@click.group()
+def cli():
+    """Policy engine CLI."""
+    pass
 
-def main():
-    """Main CLI entry point."""
-    parser = argparse.ArgumentParser(
-        description="AI Policy Advisor - Query the policy engine from the command line."
-    )
-    parser.add_argument(
-        "query", nargs="?", help="The policy question to query."
-    )
-    parser.add_argument(
-        "--json", action="store_true", help="Output results in JSON format."
-    )
-    parser.add_argument(
-        "--file", "-f", help="Read query from file instead of command line."
-    )
+@cli.command()
+@click.argument('query')
+def ask(query: str):
+    """Ask a question about company policies."""
+    engine = RagEngine()
+    result = engine.query(query)
     
-    args = parser.parse_args()
+    click.echo("\nAnswer:")
+    click.echo(result["answer"])
     
-    # Get the query from file or command line
-    query = None
-    if args.file:
-        try:
-            with open(args.file, "r") as f:
-                query = f.read().strip()
-        except Exception as e:
-            logger.error(f"Error reading file: {e}")
-            sys.exit(1)
-    elif args.query:
-        query = args.query
-    else:
-        # Interactive mode
-        print("Enter your policy question (Ctrl+D to submit):")
-        query = sys.stdin.read().strip()
+    if result["sources"]:
+        click.echo("\nSources:")
+        for source in result["sources"]:
+            click.echo(f"- {source['source']}")
+
+@cli.command()
+@click.argument('manifest_path', type=click.Path(exists=True))
+@click.option('--output', '-o', type=click.Path(), help='Output file for violations')
+def validate_manifest(manifest_path: str, output: Optional[str]):
+    """Validate a Kubernetes manifest against company policies."""
+    # Initialize RAG engine and policy enforcer
+    engine = RagEngine()
+    policy_enforcer = K8sPolicyEnforcer(engine)
     
-    if not query:
-        logger.error("No query provided.")
-        sys.exit(1)
-    
+    # Read manifest file
     try:
-        result = rag_engine.query(query)
-        
-        if args.json:
-            print(json.dumps(result, indent=2))
-        else:
-            print("\n" + "=" * 80)
-            print(f"QUESTION: {query}")
-            print("=" * 80)
-            print(f"\nANSWER: {result['answer']}")
-            
-            if result["sources"]:
-                print("\nSOURCES:")
-                for i, source in enumerate(result["sources"], 1):
-                    print(f"\n{i}. {source['source']}")
-                    print(f"   {source['text'][:200]}...")
-            
-            print("\n" + "=" * 80)
-            
+        with open(manifest_path, 'r') as f:
+            manifest = f.read()
     except Exception as e:
-        logger.error(f"Error processing query: {e}", exc_info=True)
-        sys.exit(1)
+        logger.error(f"Failed to read manifest file: {e}")
+        raise click.ClickException(f"Failed to read manifest file: {e}")
+    
+    # Validate manifest
+    try:
+        violations = policy_enforcer.enforce_policy(manifest)
+    except Exception as e:
+        logger.error(f"Failed to validate manifest: {e}")
+        raise click.ClickException(f"Failed to validate manifest: {e}")
+    
+    # Output results
+    if violations:
+        click.echo(f"\nFound {len(violations)} policy violations in {manifest_path}:")
+        for violation in violations:
+            click.echo(f"\nRule: {violation.rule}")
+            click.echo(f"Violation: {violation.violation}")
+            click.echo(f"Severity: {violation.severity}")
+        
+        # Write violations to output file if specified
+        if output:
+            try:
+                with open(output, 'w') as f:
+                    yaml.dump([v.dict() for v in violations], f)
+                click.echo(f"\nViolations written to {output}")
+            except Exception as e:
+                logger.error(f"Failed to write violations to output file: {e}")
+                raise click.ClickException(f"Failed to write violations to output file: {e}")
+        
+        # Exit with error code if there are violations
+        raise click.ClickException("Policy violations found")
+    else:
+        click.echo(f"\nNo policy violations found in {manifest_path}")
 
-
-if __name__ == "__main__":
-    main() 
+if __name__ == '__main__':
+    cli() 
