@@ -1,5 +1,6 @@
-from typing import List, Dict, Any, Optional, AsyncGenerator, Generator
+from typing import List, Dict, Any, Optional, AsyncGenerator, Generator, Union
 import logging
+import yaml
 
 from llama_index.core import Document, VectorStoreIndex
 from llama_index.core.node_parser import SimpleNodeParser
@@ -8,12 +9,151 @@ from llama_index.core.llms import LLM, ChatMessage, ChatResponse, CompletionResp
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_stack_client import LlamaStackClient
 from llama_stack_client.types import Model
-from pydantic import Field
+from pydantic import Field, BaseModel
 
 from src.core.config import config
 from src.policy.loader import policy_loader
 
 logger = logging.getLogger(__name__)
+
+class PolicyViolation(BaseModel):
+    """Model for policy violations."""
+    rule: str
+    manifest_path: str
+    violation: str
+    severity: str = "error"
+
+class K8sPolicyEnforcer:
+    """Enforces Kubernetes manifest policies using natural language rules."""
+    
+    def __init__(self, rag_engine: 'RagEngine'):
+        """Initialize the K8s policy enforcer.
+        
+        Args:
+            rag_engine: RAG engine instance to use for policy queries
+        """
+        self.rag_engine = rag_engine
+        self.policy_index = None
+        self._build_policy_index()
+    
+    def _build_policy_index(self):
+        """Build the index from policy documents."""
+        # Load policy documents
+        policy_docs = policy_loader.load_policies()
+        
+        if not policy_docs:
+            logger.warning("No policy documents found.")
+            return
+        
+        # Convert to LlamaIndex documents
+        documents = [
+            Document(text=doc["content"], metadata={"source": doc["source"]})
+            for doc in policy_docs
+        ]
+        
+        # Create node parser
+        node_parser = SimpleNodeParser.from_defaults(
+            chunk_size=config.rag.chunk_size,
+            chunk_overlap=config.rag.chunk_overlap,
+        )
+        
+        # Build the index
+        self.policy_index = VectorStoreIndex.from_documents(
+            documents,
+            node_parser=node_parser,
+        )
+        
+        logger.info(f"Built policy index with {len(documents)} policy documents.")
+    
+    def _parse_manifest(self, manifest: str) -> Dict[str, Any]:
+        """Parse a Kubernetes manifest.
+        
+        Args:
+            manifest: YAML manifest string
+            
+        Returns:
+            Parsed manifest as a dictionary
+        """
+        try:
+            return yaml.safe_load(manifest)
+        except yaml.YAMLError as e:
+            logger.error(f"Failed to parse manifest: {e}")
+            raise ValueError(f"Invalid YAML manifest: {e}")
+    
+    def _format_manifest_for_prompt(self, manifest: Dict[str, Any]) -> str:
+        """Format manifest for inclusion in prompt.
+        
+        Args:
+            manifest: Parsed manifest dictionary
+            
+        Returns:
+            Formatted manifest string
+        """
+        return yaml.dump(manifest, default_flow_style=False)
+    
+    def enforce_policy(self, manifest: Union[str, Dict[str, Any]]) -> List[PolicyViolation]:
+        """Enforce policy on a Kubernetes manifest.
+        
+        Args:
+            manifest: Kubernetes manifest as YAML string or parsed dictionary
+            
+        Returns:
+            List of policy violations found
+        """
+        if isinstance(manifest, str):
+            manifest = self._parse_manifest(manifest)
+        
+        formatted_manifest = self._format_manifest_for_prompt(manifest)
+        
+        # Create query engine
+        query_engine = self.policy_index.as_query_engine(
+            similarity_top_k=config.rag.similarity_top_k,
+        )
+        
+        # Construct prompt for policy enforcement
+        prompt = f"""Analyze this Kubernetes manifest against our company policies:
+
+{formatted_manifest}
+
+Please check if this manifest violates any of our policies. For each violation found, provide:
+1. The specific policy rule that was violated
+2. The exact part of the manifest that violates the rule
+3. The severity of the violation (error or warning)
+
+If no violations are found, respond with "No policy violations found."
+
+Format your response as a list of violations, one per line, with each violation containing:
+- Rule: [policy rule]
+- Violation: [description of violation]
+- Severity: [error/warning]
+"""
+        
+        # Execute query
+        response = query_engine.query(prompt)
+        
+        # Parse violations from response
+        violations = []
+        if "No policy violations found" not in str(response):
+            # Parse the response to extract violations
+            # This is a simple implementation - you might want to make it more robust
+            lines = str(response).split('\n')
+            current_violation = {}
+            
+            for line in lines:
+                if line.startswith('- Rule:'):
+                    if current_violation:
+                        violations.append(PolicyViolation(**current_violation))
+                    current_violation = {'rule': line[7:].strip()}
+                elif line.startswith('- Violation:'):
+                    current_violation['violation'] = line[12:].strip()
+                elif line.startswith('- Severity:'):
+                    current_violation['severity'] = line[11:].strip()
+                    current_violation['manifest_path'] = 'root'  # You might want to make this more specific
+            
+            if current_violation:
+                violations.append(PolicyViolation(**current_violation))
+        
+        return violations
 
 
 class LlamaStackLLM(LLM):
@@ -371,13 +511,22 @@ class RagEngine:
         # Execute query
         response = query_engine.query(query_text)
         
-        # Format result
+        # Format result and deduplicate sources
+        seen_texts = set()
+        unique_sources = []
+        
+        for node in getattr(response, "source_nodes", []):
+            source_text = node.get_text()
+            if source_text not in seen_texts:
+                seen_texts.add(source_text)
+                unique_sources.append({
+                    "source": node.metadata.get("source", "unknown"),
+                    "text": source_text
+                })
+        
         result = {
             "answer": str(response),
-            "sources": [
-                {"source": node.metadata.get("source", "unknown"), "text": node.get_text()}
-                for node in getattr(response, "source_nodes", [])
-            ],
+            "sources": unique_sources,
             "metadata": {
                 "model": config.llama.model_name,
                 "provider": config.llama.provider,
