@@ -1,7 +1,6 @@
 from typing import List, Dict, Any, Optional, AsyncGenerator, Generator, Union
 import logging
 import yaml
-import time
 
 from llama_index.core import Document, VectorStoreIndex
 from llama_index.core.node_parser import SimpleNodeParser
@@ -106,10 +105,9 @@ class K8sPolicyEnforcer:
         
         formatted_manifest = self._format_manifest_for_prompt(manifest)
         
-        # Create query engine with increased timeout and retry settings
+        # Create query engine
         query_engine = self.policy_index.as_query_engine(
             similarity_top_k=config.rag.similarity_top_k,
-            streaming=False,  # Disable streaming for more reliable responses
         )
         
         # Construct prompt for policy enforcement
@@ -130,30 +128,14 @@ Format your response as a list of violations, one per line, with each violation 
 - Severity: [error/warning]
 """
         
-        # Execute query with retry logic
-        max_retries = 3
-        retry_delay = 2  # seconds
-        last_error = None
-        
-        for attempt in range(max_retries):
-            try:
-                logger.info(f"Attempting policy validation (attempt {attempt + 1}/{max_retries})")
-                response = query_engine.query(prompt)
-                break
-            except Exception as e:
-                last_error = e
-                if attempt < max_retries - 1:
-                    logger.warning(f"Attempt {attempt + 1} failed: {str(e)}. Retrying in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
-                    retry_delay *= 2  # Exponential backoff
-                else:
-                    logger.error(f"All {max_retries} attempts failed. Last error: {str(e)}")
-                    raise ValueError(f"Failed to validate manifest after {max_retries} attempts: {str(e)}")
+        # Execute query
+        response = query_engine.query(prompt)
         
         # Parse violations from response
         violations = []
         if "No policy violations found" not in str(response):
             # Parse the response to extract violations
+            # This is a simple implementation - you might want to make it more robust
             lines = str(response).split('\n')
             current_violation = {}
             
@@ -210,22 +192,28 @@ class LlamaStackLLM(LLM):
         Returns:
             The completed text
         """
-        response = self.client.inference.chat_completion(
-            model_id=self.model_id,
-            messages=[
-                {"role": "system", "content": "You are a helpful AI assistant."},
-                {"role": "user", "content": prompt}
-            ]
-        )
-        # Handle the response format from LlamaStack
-        if hasattr(response, 'message'):
-            content = response.message.content
-        elif hasattr(response, 'content'):
-            content = response.content
-        else:
-            raise ValueError("Unexpected response format from LlamaStack")
-            
-        return CompletionResponse(text=content)
+        try:
+            response = self.client.inference.chat_completion(
+                model_id=self.model_id,
+                messages=[
+                    {"role": "system", "content": "You are a helpful AI assistant."},
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            # Handle the response format from LlamaStack
+            if hasattr(response, 'message'):
+                content = response.message.content
+            elif hasattr(response, 'content'):
+                content = response.content
+            else:
+                raise ValueError("Unexpected response format from LlamaStack")
+
+            return CompletionResponse(text=content)
+
+        except Exception as e:
+            logger.error(f"Error in LlamaStack completion: {e}")
+            # Return a fallback response
+            return CompletionResponse(text=f"Error: Unable to complete request due to {type(e).__name__}: {str(e)}")
     
     def stream_complete(self, prompt: str, **kwargs) -> Generator[CompletionResponse, None, None]:
         """Stream complete the prompt using LlamaStack.
@@ -261,10 +249,15 @@ class LlamaStackLLM(LLM):
         Returns:
             The chat response
         """
-        response = self.client.inference.chat_completion(
-            model_id=self.model_id,
-            messages=[{"role": msg.role.value, "content": msg.content} for msg in messages]
-        )
+        try:
+            response = self.client.inference.chat_completion(
+                model_id=self.model_id,
+                messages=[{"role": msg.role.value, "content": msg.content} for msg in messages]
+            )
+        except Exception as e:
+            logger.error(f"Error in LlamaStack chat completion: {e}")
+            # Return a fallback response
+            return ChatResponse(message=ChatMessage(role="assistant", content=f"Error: Unable to complete request due to {type(e).__name__}: {str(e)}"))
         
         # Debug logging
         logger.debug(f"LlamaStack response type: {type(response)}")
@@ -445,9 +438,10 @@ class RagEngine:
     def _setup_llm(self):
         """Set up the LLM using LlamaStackClient."""
         try:
-            # Initialize LlamaStackClient
+            # Initialize LlamaStackClient with timeout configuration
             client = LlamaStackClient(
                 base_url=config.llama.api_url,
+                timeout=30.0,  # 30 second timeout
             )
             
             # Create LLM instance using the inference API
