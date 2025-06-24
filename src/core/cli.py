@@ -4,6 +4,7 @@
 import logging
 import click
 import yaml
+import httpx
 from pathlib import Path
 from typing import Optional
 
@@ -38,46 +39,96 @@ def _override_config(provider: str, model: Optional[str] = None):
 @click.group()
 @click.option('--provider', '-p', 
               type=click.Choice(['llamastack', 'anthropic', 'openai']), 
-              help='LLM provider to use (overrides config)')
-@click.option('--model', '-m', help='Model name to use (overrides config)')
+              help='LLM provider to use (overrides config, local mode only)')
+@click.option('--model', '-m', help='Model name to use (overrides config, local mode only)')
+@click.option('--api-url', default='http://localhost:8000', 
+              help='API server URL for remote mode (default: http://localhost:8000)')
+@click.option('--use-api', is_flag=True, 
+              help='Use API server instead of local processing (more efficient, avoids re-indexing)')
 @click.pass_context
-def cli(ctx, provider, model):
-    """Policy engine CLI."""
-    # Store provider and model in context for subcommands
+def cli(ctx, provider, model, api_url, use_api):
+    """Policy engine CLI.
+    
+    Two modes of operation:
+    
+    1. LOCAL MODE (default): Processes policies locally, builds RAG index on each run
+    
+    2. API MODE (--use-api): Queries a running API server, more efficient as it
+       reuses pre-built RAG indices and avoids re-parsing policy documents
+    """
+    # Store options in context for subcommands
     ctx.ensure_object(dict)
     ctx.obj['provider'] = provider
     ctx.obj['model'] = model
+    ctx.obj['api_url'] = api_url
+    ctx.obj['use_api'] = use_api
 
 @cli.command()
 @click.argument('query')
 @click.pass_context
 def ask(ctx, query: str):
     """Ask a question about company policies."""
-    # Override config if provider/model specified
-    provider = ctx.obj.get('provider')
-    model = ctx.obj.get('model')
+    use_api = ctx.obj.get('use_api', False)
+    api_url = ctx.obj.get('api_url', 'http://localhost:8000')
     
-    if provider:
-        _override_config(provider, model)
-    
-    try:
-        engine = RagEngine()
-        result = engine.query(query)
-        
-        click.echo("\nAnswer:")
-        click.echo(result["answer"])
-        
-        click.echo(f"\nUsed: {result['metadata']['provider']} - {result['metadata']['model']}")
-        
-        if result["sources"]:
-            click.echo("\nSources:")
-            for source in result["sources"]:
-                click.echo(f"- {source['source']}")
+    if use_api:
+        # Use API server
+        try:
+            with httpx.Client() as client:
+                response = client.post(
+                    f"{api_url}/query",
+                    json={"query": query},
+                    timeout=30.0
+                )
+                response.raise_for_status()
+                result = response.json()
                 
-    except Exception as e:
-        logger.error(f"Error processing query: {e}")
-        click.echo(f"Error: {e}", err=True)
-        raise click.ClickException(f"Failed to process query: {e}")
+                click.echo("\nAnswer:")
+                click.echo(result["answer"])
+                
+                if result.get("metadata"):
+                    click.echo(f"\nMode: API Server ({api_url})")
+                
+                if result.get("sources"):
+                    click.echo("\nSources:")
+                    for source in result["sources"]:
+                        click.echo(f"- {source['source']}")
+                        
+        except httpx.RequestError as e:
+            logger.error(f"Error connecting to API server: {e}")
+            raise click.ClickException(f"Failed to connect to API server at {api_url}: {e}")
+        except httpx.HTTPStatusError as e:
+            logger.error(f"API server error: {e}")
+            raise click.ClickException(f"API server error: {e.response.status_code} - {e.response.text}")
+        except Exception as e:
+            logger.error(f"Error processing query via API: {e}")
+            raise click.ClickException(f"Failed to process query via API: {e}")
+    else:
+        # Use local processing
+        provider = ctx.obj.get('provider')
+        model = ctx.obj.get('model')
+        
+        if provider:
+            _override_config(provider, model)
+        
+        try:
+            engine = RagEngine()
+            result = engine.query(query)
+            
+            click.echo("\nAnswer:")
+            click.echo(result["answer"])
+            
+            click.echo(f"\nUsed: {result['metadata']['provider']} - {result['metadata']['model']}")
+            
+            if result["sources"]:
+                click.echo("\nSources:")
+                for source in result["sources"]:
+                    click.echo(f"- {source['source']}")
+                    
+        except Exception as e:
+            logger.error(f"Error processing query: {e}")
+            click.echo(f"Error: {e}", err=True)
+            raise click.ClickException(f"Failed to process query: {e}")
 
 @cli.command()
 @click.argument('manifest_path', type=click.Path(exists=True))
@@ -85,16 +136,8 @@ def ask(ctx, query: str):
 @click.pass_context
 def validate_manifest(ctx, manifest_path: str, output: Optional[str]):
     """Validate a Kubernetes manifest against company policies."""
-    # Override config if provider/model specified
-    provider = ctx.obj.get('provider')
-    model = ctx.obj.get('model')
-    
-    if provider:
-        _override_config(provider, model)
-    
-    # Initialize RAG engine and policy enforcer
-    engine = RagEngine()
-    policy_enforcer = K8sPolicyEnforcer(engine)
+    use_api = ctx.obj.get('use_api', False)
+    api_url = ctx.obj.get('api_url', 'http://localhost:8000')
     
     # Read manifest file
     try:
@@ -104,35 +147,94 @@ def validate_manifest(ctx, manifest_path: str, output: Optional[str]):
         logger.error(f"Failed to read manifest file: {e}")
         raise click.ClickException(f"Failed to read manifest file: {e}")
     
-    # Validate manifest
-    try:
-        violations = policy_enforcer.enforce_policy(manifest)
-    except Exception as e:
-        logger.error(f"Failed to validate manifest: {e}")
-        raise click.ClickException(f"Failed to validate manifest: {e}")
-    
-    # Output results
-    if violations:
-        click.echo(f"\nFound {len(violations)} policy violations in {manifest_path}:")
-        for violation in violations:
-            click.echo(f"\nRule: {violation.rule}")
-            click.echo(f"Violation: {violation.violation}")
-            click.echo(f"Severity: {violation.severity}")
-        
-        # Write violations to output file if specified
-        if output:
-            try:
-                with open(output, 'w') as f:
-                    yaml.dump([v.dict() for v in violations], f)
-                click.echo(f"\nViolations written to {output}")
-            except Exception as e:
-                logger.error(f"Failed to write violations to output file: {e}")
-                raise click.ClickException(f"Failed to write violations to output file: {e}")
-        
-        # Exit with error code if there are violations
-        raise click.ClickException("Policy violations found")
+    if use_api:
+        # Use API server
+        try:
+            with httpx.Client() as client:
+                response = client.post(
+                    f"{api_url}/validate-manifest",
+                    json={"manifest": manifest},
+                    timeout=60.0  # Longer timeout for manifest validation
+                )
+                response.raise_for_status()
+                result = response.json()
+                
+                violations = result.get("violations", [])
+                
+                if violations:
+                    click.echo(f"\nFound {len(violations)} policy violations in {manifest_path}:")
+                    for violation in violations:
+                        click.echo(f"\nRule: {violation['rule']}")
+                        click.echo(f"Violation: {violation['violation']}")
+                        click.echo(f"Severity: {violation['severity']}")
+                    
+                    # Write violations to output file if specified
+                    if output:
+                        try:
+                            with open(output, 'w') as f:
+                                yaml.dump(violations, f)
+                            click.echo(f"\nViolations written to {output}")
+                        except Exception as e:
+                            logger.error(f"Failed to write violations to output file: {e}")
+                            raise click.ClickException(f"Failed to write violations to output file: {e}")
+                    
+                    click.echo(f"\nMode: API Server ({api_url})")
+                    # Exit with error code if there are violations
+                    raise click.ClickException("Policy violations found")
+                else:
+                    click.echo(f"\nNo policy violations found in {manifest_path}")
+                    click.echo(f"Mode: API Server ({api_url})")
+                    
+        except httpx.RequestError as e:
+            logger.error(f"Error connecting to API server: {e}")
+            raise click.ClickException(f"Failed to connect to API server at {api_url}: {e}")
+        except httpx.HTTPStatusError as e:
+            logger.error(f"API server error: {e}")
+            raise click.ClickException(f"API server error: {e.response.status_code} - {e.response.text}")
+        except Exception as e:
+            logger.error(f"Error validating manifest via API: {e}")
+            raise click.ClickException(f"Failed to validate manifest via API: {e}")
     else:
-        click.echo(f"\nNo policy violations found in {manifest_path}")
+        # Use local processing
+        provider = ctx.obj.get('provider')
+        model = ctx.obj.get('model')
+        
+        if provider:
+            _override_config(provider, model)
+        
+        # Initialize RAG engine and policy enforcer
+        engine = RagEngine()
+        policy_enforcer = K8sPolicyEnforcer(engine)
+        
+        # Validate manifest
+        try:
+            violations = policy_enforcer.enforce_policy(manifest)
+        except Exception as e:
+            logger.error(f"Failed to validate manifest: {e}")
+            raise click.ClickException(f"Failed to validate manifest: {e}")
+        
+        # Output results
+        if violations:
+            click.echo(f"\nFound {len(violations)} policy violations in {manifest_path}:")
+            for violation in violations:
+                click.echo(f"\nRule: {violation.rule}")
+                click.echo(f"Violation: {violation.violation}")
+                click.echo(f"Severity: {violation.severity}")
+            
+            # Write violations to output file if specified
+            if output:
+                try:
+                    with open(output, 'w') as f:
+                        yaml.dump([v.dict() for v in violations], f)
+                    click.echo(f"\nViolations written to {output}")
+                except Exception as e:
+                    logger.error(f"Failed to write violations to output file: {e}")
+                    raise click.ClickException(f"Failed to write violations to output file: {e}")
+            
+            # Exit with error code if there are violations
+            raise click.ClickException("Policy violations found")
+        else:
+            click.echo(f"\nNo policy violations found in {manifest_path}")
 
 @cli.command()
 def providers():
