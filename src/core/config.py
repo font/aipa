@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Literal
 
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -11,14 +11,32 @@ load_dotenv()
 # Base directory
 BASE_DIR = Path(__file__).parent.parent.parent
 
+LLMProvider = Literal["llamastack", "anthropic", "openai"]
 
-class LlamaConfig(BaseModel):
+
+class LLMConfig(BaseModel):
+    """Configuration for LLM providers."""
+    provider: LLMProvider = os.getenv("LLM_PROVIDER", "llamastack")
+    temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.1"))
+    max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "1024"))
+
+
+class LlamaStackConfig(BaseModel):
     """Configuration for Llama Stack."""
-    api_url: str = os.getenv("LLAMA_API_URL", "http://localhost:8000")
-    model_name: str = os.getenv("LLAMA_MODEL", "llama2")
-    provider: str = os.getenv("LLAMA_PROVIDER", "ollama")
-    temperature: float = float(os.getenv("LLAMA_TEMPERATURE", "0.1"))
-    max_tokens: int = int(os.getenv("LLAMA_MAX_TOKENS", "1024"))
+    api_url: str = os.getenv("LLAMASTACK_API_URL", "http://localhost:8000")
+    model_name: str = os.getenv("LLAMASTACK_MODEL", "llama2")
+
+
+class AnthropicConfig(BaseModel):
+    """Configuration for Anthropic."""
+    api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
+    model_name: str = os.getenv("ANTHROPIC_MODEL", "claude-3-haiku-20240307")
+
+
+class OpenAIConfig(BaseModel):
+    """Configuration for OpenAI."""
+    api_key: str = os.getenv("OPENAI_API_KEY", "")
+    model_name: str = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
 
 
 class RagConfig(BaseModel):
@@ -35,7 +53,10 @@ class PolicyConfig(BaseModel):
 
 class Config(BaseModel):
     """Main configuration class."""
-    llama: LlamaConfig = LlamaConfig()
+    llm: LLMConfig = LLMConfig()
+    llamastack: LlamaStackConfig = LlamaStackConfig()
+    anthropic: AnthropicConfig = AnthropicConfig()
+    openai: OpenAIConfig = OpenAIConfig()
     rag: RagConfig = RagConfig()
     policy: PolicyConfig = PolicyConfig()
     debug: bool = os.getenv("DEBUG", "False").lower() in ("true", "1", "t")

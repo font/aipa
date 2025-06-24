@@ -13,12 +13,17 @@ requires-python = ">=3.10"
 dependencies = [
     "llama-index-core>=0.10.0",
     "llama-index-readers-file>=0.1.0",
+    "llama-index-llms-anthropic>=0.1.0",
+    "llama-index-llms-openai>=0.1.0",
+    "llama-index-embeddings-huggingface>=0.2.0",
     "llama-stack-client>=0.1.0",
     "fastapi>=0.103.1",
     "uvicorn>=0.23.2",
     "python-dotenv>=1.0.0",
     "langchain>=0.0.267",
     "pydantic>=2.3.0",
+    "click>=8.0.0",
+    "pyyaml>=6.0.0",
 ]
 
 [project.optional-dependencies]

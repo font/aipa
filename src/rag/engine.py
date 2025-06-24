@@ -436,27 +436,21 @@ class RagEngine:
         self._setup_embeddings()
     
     def _setup_llm(self):
-        """Set up the LLM using LlamaStackClient."""
+        """Set up the LLM using the configured provider."""
         try:
-            # Initialize LlamaStackClient with timeout configuration
-            client = LlamaStackClient(
-                base_url=config.llama.api_url,
-                timeout=30.0,  # 30 second timeout
-            )
+            from src.core.llm_factory import llm_factory
             
-            # Create LLM instance using the inference API
-            self.llm = self.llm or LlamaStackLLM(
-                client=client,
-                model_id=config.llama.model_name
-            )
+            # Use the provided LLM or create one using the factory
+            if not self.llm:
+                self.llm = llm_factory.setup_global_llm()
+            else:
+                # Configure global settings with the provided LLM
+                Settings.llm = self.llm
+                Settings.chunk_size = config.rag.chunk_size
+                Settings.chunk_overlap = config.rag.chunk_overlap
             
-            # Configure global settings
-            Settings.llm = self.llm
-            Settings.chunk_size = config.rag.chunk_size
-            Settings.chunk_overlap = config.rag.chunk_overlap
-            
-        except ImportError as e:
-            logger.error(f"Failed to import llama-stack-client: {e}")
+        except Exception as e:
+            logger.error(f"Failed to setup LLM: {e}")
             raise
 
     def _setup_embeddings(self):
@@ -557,12 +551,24 @@ class RagEngine:
             "answer": str(response),
             "sources": unique_sources,
             "metadata": {
-                "model": config.llama.model_name,
-                "provider": config.llama.provider,
+                "provider": config.llm.provider,
+                "model": self._get_model_name(),
             }
         }
         
         return result
+    
+    def _get_model_name(self) -> str:
+        """Get the model name based on the current provider."""
+        provider = config.llm.provider
+        if provider == "anthropic":
+            return config.anthropic.model_name
+        elif provider == "openai":
+            return config.openai.model_name
+        elif provider == "llamastack":
+            return config.llamastack.model_name
+        else:
+            return "unknown"
 
 
 # Create a singleton RAG engine instance
