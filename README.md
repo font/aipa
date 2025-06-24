@@ -66,6 +66,11 @@ LLAMASTACK_MODEL=llama2
 
 ## CLI Usage
 
+The CLI supports two modes of operation:
+
+### Local Mode (Default)
+Processes policies locally, builds RAG index on each run:
+
 ```bash
 # Ask policy questions
 python src/core/cli.py ask "What are the password requirements?"
@@ -80,19 +85,62 @@ python src/core/cli.py validate-manifest tests/deployment-with-violations.yaml
 python src/core/cli.py providers
 ```
 
+### API Mode (Efficient)
+Queries a running API server, more efficient as it reuses pre-built RAG indices:
+
+```bash
+# Start the API server (in another terminal)
+python start_server.py
+
+# Use API mode for queries
+python src/core/cli.py --use-api ask "What are the password requirements?"
+
+# Validate manifests via API
+python src/core/cli.py --use-api validate-manifest tests/deployment-compliant.yaml
+
+# Use custom API URL
+python src/core/cli.py --use-api --api-url http://localhost:8001 ask "Security policy?"
+```
+
+### Convenience Script
+Use the `run_cli.sh` script for easier usage:
+
+```bash
+# Show help and examples
+./run_cli.sh
+
+# Local mode
+./run_cli.sh --provider anthropic ask "Can I use Docker Hub images?"
+
+# API mode (more efficient)
+./run_cli.sh --use-api ask "Can I use Docker Hub images?"
+```
+
 ## API Usage
 
-Run the API server:
+### Start the Server
 ```bash
+python start_server.py
+# or
 python -m src.api.main
 ```
 
-Make policy queries:
+### Query Policies
 ```bash
 curl -X POST http://localhost:8000/query \
   -H "Content-Type: application/json" \
   -d '{"query": "Can I install software on my work laptop?"}'
 ```
+
+### Validate Kubernetes Manifests
+```bash
+curl -X POST http://localhost:8000/validate-manifest \
+  -H "Content-Type: application/json" \
+  -d '{"manifest": "apiVersion: apps/v1\nkind: Deployment\n..."}'
+```
+
+### API Documentation
+Visit http://localhost:8000/docs for interactive API documentation.
 
 ## Architecture
 
