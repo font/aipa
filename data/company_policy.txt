@@ -22,7 +22,7 @@
 1. VPN must be used when accessing company resources remotely.
 2. Work from public networks requires additional security measures.
 3. Home networks used for work must have WPA2 or better security.
-4. Remote workers must ensure their workspace complies with confidentiality requirements. 
+4. Remote workers must ensure their workspace complies with confidentiality requirements.
 
 # Kubernetes Policy Rules
 

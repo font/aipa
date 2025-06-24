@@ -20,4 +20,4 @@ POLICY_DIR=data                      # Directory containing policy documents
 
 # Debug mode
 DEBUG=false                          # Enable debug mode
-""" 
+"""

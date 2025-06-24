@@ -63,4 +63,4 @@ class Config(BaseModel):
 
 
 # Create a singleton config instance
-config = Config() 
+config = Config()

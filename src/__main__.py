@@ -11,15 +11,15 @@ def main():
         description="AI Policy Advisor - A RAG-based policy engine using llama-stack"
     )
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
-    
+
     # API server command
     api_parser = subparsers.add_parser("api", help="Start the API server")
-    
+
     # CLI command - pass through to Click
     cli_parser = subparsers.add_parser("cli", help="Run CLI commands")
-    
+
     args, remaining = parser.parse_known_args()
-    
+
     if args.command == "api":
         start_api()
     elif args.command == "cli":
@@ -31,4 +31,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main() 
+    main()

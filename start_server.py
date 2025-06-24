@@ -15,4 +15,4 @@ if __name__ == "__main__":
     print("Server will be available at: http://localhost:8000")
     print("API docs at: http://localhost:8000/docs")
     print("Press Ctrl+C to stop")
-    start() 
+    start()

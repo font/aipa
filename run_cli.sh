@@ -58,4 +58,4 @@ if [ $# -eq 0 ]; then
 fi
 
 # Run the CLI with all arguments passed through
-python src/core/cli.py "$@" 
+python src/core/cli.py "$@"

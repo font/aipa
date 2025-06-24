@@ -25,52 +25,52 @@ class PolicyViolation(BaseModel):
 
 class K8sPolicyEnforcer:
     """Enforces Kubernetes manifest policies using natural language rules."""
-    
+
     def __init__(self, rag_engine: 'RagEngine'):
         """Initialize the K8s policy enforcer.
-        
+
         Args:
             rag_engine: RAG engine instance to use for policy queries
         """
         self.rag_engine = rag_engine
         self.policy_index = None
         self._build_policy_index()
-    
+
     def _build_policy_index(self):
         """Build the index from policy documents."""
         # Load policy documents
         policy_docs = policy_loader.load_policies()
-        
+
         if not policy_docs:
             logger.warning("No policy documents found.")
             return
-        
+
         # Convert to LlamaIndex documents
         documents = [
             Document(text=doc["content"], metadata={"source": doc["source"]})
             for doc in policy_docs
         ]
-        
+
         # Create node parser
         node_parser = SimpleNodeParser.from_defaults(
             chunk_size=config.rag.chunk_size,
             chunk_overlap=config.rag.chunk_overlap,
         )
-        
+
         # Build the index
         self.policy_index = VectorStoreIndex.from_documents(
             documents,
             node_parser=node_parser,
         )
-        
+
         logger.info(f"Built policy index with {len(documents)} policy documents.")
-    
+
     def _parse_manifest(self, manifest: str) -> List[Dict[str, Any]]:
         """Parse a Kubernetes manifest (potentially containing multiple documents).
-        
+
         Args:
             manifest: YAML manifest string
-            
+
         Returns:
             List of parsed manifest dictionaries
         """
@@ -85,13 +85,13 @@ class K8sPolicyEnforcer:
         except yaml.YAMLError as e:
             logger.error(f"Failed to parse manifest: {e}")
             raise ValueError(f"Invalid YAML manifest: {e}")
-    
+
     def _format_manifest_for_prompt(self, manifests: List[Dict[str, Any]]) -> str:
         """Format manifests for inclusion in prompt.
-        
+
         Args:
             manifests: List of parsed manifest dictionaries
-            
+
         Returns:
             Formatted manifest string
         """
@@ -101,13 +101,13 @@ class K8sPolicyEnforcer:
             formatted_docs.append(yaml.dump(manifest, default_flow_style=False))
             formatted_docs.append("---")
         return "\n".join(formatted_docs)
-    
+
     def enforce_policy(self, manifest: Union[str, Dict[str, Any], List[Dict[str, Any]]]) -> List[PolicyViolation]:
         """Enforce policy on a Kubernetes manifest.
-        
+
         Args:
             manifest: Kubernetes manifest as YAML string, parsed dictionary, or list of dictionaries
-            
+
         Returns:
             List of policy violations found
         """
@@ -117,14 +117,14 @@ class K8sPolicyEnforcer:
             manifests = [manifest]
         else:
             manifests = manifest
-        
+
         formatted_manifest = self._format_manifest_for_prompt(manifests)
-        
+
         # Create query engine
         query_engine = self.policy_index.as_query_engine(
             similarity_top_k=config.rag.similarity_top_k,
         )
-        
+
         # Construct prompt for policy enforcement
         prompt = f"""Analyze this Kubernetes manifest against our company policies:
 
@@ -142,10 +142,10 @@ Format your response as a list of violations, one per line, with each violation 
 - Violation: [description of violation]
 - Severity: [error/warning]
 """
-        
+
         # Execute query
         response = query_engine.query(prompt)
-        
+
         # Parse violations from response
         violations = []
         if "No policy violations found" not in str(response):
@@ -153,7 +153,7 @@ Format your response as a list of violations, one per line, with each violation 
             # This is a simple implementation - you might want to make it more robust
             lines = str(response).split('\n')
             current_violation = {}
-            
+
             for line in lines:
                 if line.startswith('- Rule:'):
                     if current_violation:
@@ -164,28 +164,28 @@ Format your response as a list of violations, one per line, with each violation 
                 elif line.startswith('- Severity:'):
                     current_violation['severity'] = line[11:].strip()
                     current_violation['manifest_path'] = 'root'  # You might want to make this more specific
-            
+
             if current_violation:
                 violations.append(PolicyViolation(**current_violation))
-        
+
         return violations
 
 
 class LlamaStackLLM(LLM):
     """Wrapper for LlamaStack LLM to work with LlamaIndex."""
-    
+
     client: LlamaStackClient = Field(description="LlamaStackClient instance")
     model_id: str = Field(description="Model ID to use")
-    
+
     def __init__(self, client: LlamaStackClient, model_id: str):
         """Initialize the LlamaStack LLM wrapper.
-        
+
         Args:
             client: LlamaStackClient instance
             model_id: Model ID to use
         """
         super().__init__(client=client, model_id=model_id)
-    
+
     @property
     def metadata(self) -> LLMMetadata:
         """Get LLM metadata."""
@@ -196,14 +196,14 @@ class LlamaStackLLM(LLM):
             context_window=4096,  # Default value, adjust based on your model
             num_output=2048,  # Default value, adjust based on your model
         )
-    
+
     def complete(self, prompt: str, **kwargs) -> CompletionResponse:
         """Complete the prompt using LlamaStack.
-        
+
         Args:
             prompt: The prompt to complete
             **kwargs: Additional arguments
-            
+
         Returns:
             The completed text
         """
@@ -229,14 +229,14 @@ class LlamaStackLLM(LLM):
             logger.error(f"Error in LlamaStack completion: {e}")
             # Return a fallback response
             return CompletionResponse(text=f"Error: Unable to complete request due to {type(e).__name__}: {str(e)}")
-    
+
     def stream_complete(self, prompt: str, **kwargs) -> Generator[CompletionResponse, None, None]:
         """Stream complete the prompt using LlamaStack.
-        
+
         Args:
             prompt: The prompt to complete
             **kwargs: Additional arguments
-            
+
         Yields:
             The completed text chunks
         """
@@ -253,14 +253,14 @@ class LlamaStackLLM(LLM):
                 yield CompletionResponse(text=chunk.delta.content)
             elif hasattr(chunk, 'content') and chunk.content:
                 yield CompletionResponse(text=chunk.content)
-    
+
     def chat(self, messages: List[ChatMessage], **kwargs) -> ChatResponse:
         """Chat with the model using LlamaStack.
-        
+
         Args:
             messages: List of chat messages
             **kwargs: Additional arguments
-            
+
         Returns:
             The chat response
         """
@@ -273,11 +273,11 @@ class LlamaStackLLM(LLM):
             logger.error(f"Error in LlamaStack chat completion: {e}")
             # Return a fallback response
             return ChatResponse(message=ChatMessage(role="assistant", content=f"Error: Unable to complete request due to {type(e).__name__}: {str(e)}"))
-        
+
         # Debug logging
         logger.debug(f"LlamaStack response type: {type(response)}")
         logger.debug(f"LlamaStack response attributes: {dir(response)}")
-        
+
         # Handle the response format from LlamaStack
         try:
             if hasattr(response, 'completion_message'):
@@ -307,24 +307,24 @@ class LlamaStackLLM(LLM):
                     raise ValueError(f"Unexpected response dict format: {response}")
             else:
                 raise ValueError(f"Unexpected response type: {type(response)}")
-                
+
             if not content:
                 raise ValueError("Empty response content")
-                
+
             return ChatResponse(message=ChatMessage(role="assistant", content=content))
-            
+
         except Exception as e:
             logger.error(f"Error processing LlamaStack response: {str(e)}")
             logger.error(f"Response object: {response}")
             raise ValueError(f"Failed to process LlamaStack response: {str(e)}")
-    
+
     def stream_chat(self, messages: List[ChatMessage], **kwargs) -> Generator[ChatResponse, None, None]:
         """Stream chat with the model using LlamaStack.
-        
+
         Args:
             messages: List of chat messages
             **kwargs: Additional arguments
-            
+
         Yields:
             The chat response chunks
         """
@@ -333,7 +333,7 @@ class LlamaStackLLM(LLM):
             messages=[{"role": msg.role.value, "content": msg.content} for msg in messages],
             stream=True
         )
-        
+
         for chunk in response:
             try:
                 content = None
@@ -360,75 +360,75 @@ class LlamaStackLLM(LLM):
                         content = chunk['text']
                     elif 'response' in chunk:
                         content = chunk['response']
-                
+
                 if content:
                     yield ChatResponse(message=ChatMessage(role="assistant", content=content))
-                    
+
             except Exception as e:
                 logger.error(f"Error processing LlamaStack stream chunk: {str(e)}")
                 logger.error(f"Chunk object: {chunk}")
                 continue
-    
+
     async def acomplete(self, prompt: str, **kwargs) -> CompletionResponse:
         """Async complete the prompt using LlamaStack.
-        
+
         Note: LlamaStack's client doesn't have native async support, so this is a wrapper
         around the synchronous complete method. For true async support, we would need to
         implement this using an async HTTP client.
-        
+
         Args:
             prompt: The prompt to complete
             **kwargs: Additional arguments
-            
+
         Returns:
             The completed text
         """
         return self.complete(prompt, **kwargs)
-    
+
     async def astream_complete(self, prompt: str, **kwargs) -> AsyncGenerator[CompletionResponse, None]:
         """Async stream complete the prompt using LlamaStack.
-        
+
         Note: LlamaStack's client doesn't have native async support, so this is a wrapper
         around the synchronous stream_complete method. For true async support, we would need to
         implement this using an async HTTP client.
-        
+
         Args:
             prompt: The prompt to complete
             **kwargs: Additional arguments
-            
+
         Yields:
             The completed text chunks
         """
         for response in self.stream_complete(prompt, **kwargs):
             yield response
-    
+
     async def achat(self, messages: List[ChatMessage], **kwargs) -> ChatResponse:
         """Async chat with the model using LlamaStack.
-        
+
         Note: LlamaStack's client doesn't have native async support, so this is a wrapper
         around the synchronous chat method. For true async support, we would need to
         implement this using an async HTTP client.
-        
+
         Args:
             messages: List of chat messages
             **kwargs: Additional arguments
-            
+
         Returns:
             The chat response
         """
         return self.chat(messages, **kwargs)
-    
+
     async def astream_chat(self, messages: List[ChatMessage], **kwargs) -> AsyncGenerator[ChatResponse, None]:
         """Async stream chat with the model using LlamaStack.
-        
+
         Note: LlamaStack's client doesn't have native async support, so this is a wrapper
         around the synchronous stream_chat method. For true async support, we would need to
         implement this using an async HTTP client.
-        
+
         Args:
             messages: List of chat messages
             **kwargs: Additional arguments
-            
+
         Yields:
             The chat response chunks
         """
@@ -438,10 +438,10 @@ class LlamaStackLLM(LLM):
 
 class RagEngine:
     """Retrieval-Augmented Generation engine for policy queries."""
-    
+
     def __init__(self, llm: Optional[LLM] = None):
         """Initialize the RAG engine.
-        
+
         Args:
             llm: LLM instance to use. If None, will use llama-stack-client.
         """
@@ -449,12 +449,12 @@ class RagEngine:
         self.index = None
         self._setup_llm()
         self._setup_embeddings()
-    
+
     def _setup_llm(self):
         """Set up the LLM using the configured provider."""
         try:
             from src.core.llm_factory import llm_factory
-            
+
             # Use the provided LLM or create one using the factory
             if not self.llm:
                 self.llm = llm_factory.setup_global_llm()
@@ -463,7 +463,7 @@ class RagEngine:
                 Settings.llm = self.llm
                 Settings.chunk_size = config.rag.chunk_size
                 Settings.chunk_overlap = config.rag.chunk_overlap
-            
+
         except Exception as e:
             logger.error(f"Failed to setup LLM: {e}")
             raise
@@ -475,83 +475,83 @@ class RagEngine:
             embed_model = HuggingFaceEmbedding(
                 model_name="BAAI/bge-small-en-v1.5"
             )
-            
+
             # Configure global settings
             Settings.embed_model = embed_model
-            
+
         except ImportError as e:
             logger.error(f"Failed to import HuggingFace embedding model: {e}")
             raise
-    
+
     def build_index(self):
         """Build the index from policy documents."""
         # Load policy documents
         policy_docs = policy_loader.load_policies()
-        
+
         if not policy_docs:
             logger.warning("No policy documents found.")
             return
-        
+
         # Convert to LlamaIndex documents
         documents = [
             Document(text=doc["content"], metadata={"source": doc["source"]})
             for doc in policy_docs
         ]
-        
+
         # Create node parser
         node_parser = SimpleNodeParser.from_defaults(
             chunk_size=config.rag.chunk_size,
             chunk_overlap=config.rag.chunk_overlap,
         )
-        
+
         # Build the index
         self.index = VectorStoreIndex.from_documents(
             documents,
             node_parser=node_parser,
         )
-        
+
         logger.info(f"Built index with {len(documents)} policy documents.")
-    
+
     def query(self, query_text: str) -> Dict[str, Any]:
         """Query the policy engine.
-        
+
         Args:
             query_text: The query string.
-            
+
         Returns:
             A dictionary containing the response, relevant documents, and metadata.
         """
         if not self.index:
             self.build_index()
-        
+
         # Create query engine
         query_engine = self.index.as_query_engine(
             similarity_top_k=config.rag.similarity_top_k,
         )
-        
+
         # Execute query
         response = query_engine.query(query_text)
-        
+
         # Debug logging for source nodes
         logger.debug("Source nodes from response:")
         for node in getattr(response, "source_nodes", []):
             logger.debug(f"Node ID: {node.node.node_id}")
             logger.debug(f"Source: {node.node.metadata.get('source', 'unknown')}")
             logger.debug(f"Text: {node.node.get_text()[:100]}...")  # First 100 chars
-        
+
         # Format result and deduplicate sources
         seen_sources = set()
         unique_sources = []
-        
+
         for node in getattr(response, "source_nodes", []):
             source_path = node.node.metadata.get("source", "unknown")
             source_text = node.node.get_text()
             source_key = f"{source_path}:{source_text}"
-            
+
             logger.debug(f"Processing source: {source_path}")
             logger.debug(f"Source key: {source_key}")
             logger.debug(f"Already seen: {source_key in seen_sources}")
-            
+
             if source_key not in seen_sources:
                 seen_sources.add(source_key)
                 unique_sources.append({
@@ -561,7 +561,7 @@ class RagEngine:
                 logger.debug("Added to unique sources")
             else:
                 logger.debug("Skipped duplicate source")
-        
+
         result = {
             "answer": str(response),
             "sources": unique_sources,
@@ -570,9 +570,9 @@ class RagEngine:
                 "model": self._get_model_name(),
             }
         }
-        
+
         return result
-    
+
     def _get_model_name(self) -> str:
         """Get the model name based on the current provider."""
         provider = config.llm.provider
@@ -587,4 +587,4 @@ class RagEngine:
 
 
 # Create a singleton RAG engine instance
-rag_engine = RagEngine() 
+rag_engine = RagEngine()

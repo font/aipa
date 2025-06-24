@@ -19,4 +19,4 @@ setup(
             "aipa=src.__main__:main",
         ],
     },
-) 
+)

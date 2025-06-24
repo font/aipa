@@ -45,4 +45,4 @@ class QueryResponse(BaseModel):
     )
     metadata: Dict[str, Any] = Field(
         default_factory=dict, description="Metadata about the query and response"
-    ) 
+    )

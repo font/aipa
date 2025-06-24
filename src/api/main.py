@@ -3,7 +3,7 @@ from fastapi import FastAPI, HTTPException
 import uvicorn
 
 from src.api.models import (
-    QueryRequest, QueryResponse, 
+    QueryRequest, QueryResponse,
     ManifestValidationRequest, ManifestValidationResponse, PolicyViolationResponse
 )
 from src.rag.engine import rag_engine, K8sPolicyEnforcer
@@ -48,7 +48,7 @@ async def validate_manifest(request: ManifestValidationRequest) -> ManifestValid
     try:
         logger.info("Received manifest validation request")
         violations = k8s_enforcer.enforce_policy(request.manifest)
-        
+
         # Convert PolicyViolation objects to response models
         violation_responses = [
             PolicyViolationResponse(
@@ -59,7 +59,7 @@ async def validate_manifest(request: ManifestValidationRequest) -> ManifestValid
             )
             for v in violations
         ]
-        
+
         return ManifestValidationResponse(
             violations=violation_responses,
             compliant=len(violations) == 0,
@@ -93,4 +93,4 @@ def start():
 
 
 if __name__ == "__main__":
-    start() 
+    start()
