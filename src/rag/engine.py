@@ -65,45 +65,60 @@ class K8sPolicyEnforcer:
         
         logger.info(f"Built policy index with {len(documents)} policy documents.")
     
-    def _parse_manifest(self, manifest: str) -> Dict[str, Any]:
-        """Parse a Kubernetes manifest.
+    def _parse_manifest(self, manifest: str) -> List[Dict[str, Any]]:
+        """Parse a Kubernetes manifest (potentially containing multiple documents).
         
         Args:
             manifest: YAML manifest string
             
         Returns:
-            Parsed manifest as a dictionary
+            List of parsed manifest dictionaries
         """
         try:
-            return yaml.safe_load(manifest)
+            # Handle multiple documents separated by ---
+            documents = list(yaml.safe_load_all(manifest))
+            # Filter out None/empty documents
+            documents = [doc for doc in documents if doc is not None]
+            if not documents:
+                raise ValueError("No valid documents found in manifest")
+            return documents
         except yaml.YAMLError as e:
             logger.error(f"Failed to parse manifest: {e}")
             raise ValueError(f"Invalid YAML manifest: {e}")
     
-    def _format_manifest_for_prompt(self, manifest: Dict[str, Any]) -> str:
-        """Format manifest for inclusion in prompt.
+    def _format_manifest_for_prompt(self, manifests: List[Dict[str, Any]]) -> str:
+        """Format manifests for inclusion in prompt.
         
         Args:
-            manifest: Parsed manifest dictionary
+            manifests: List of parsed manifest dictionaries
             
         Returns:
             Formatted manifest string
         """
-        return yaml.dump(manifest, default_flow_style=False)
+        formatted_docs = []
+        for i, manifest in enumerate(manifests):
+            formatted_docs.append(f"# Document {i+1}: {manifest.get('kind', 'Unknown')} - {manifest.get('metadata', {}).get('name', 'Unnamed')}")
+            formatted_docs.append(yaml.dump(manifest, default_flow_style=False))
+            formatted_docs.append("---")
+        return "\n".join(formatted_docs)
     
-    def enforce_policy(self, manifest: Union[str, Dict[str, Any]]) -> List[PolicyViolation]:
+    def enforce_policy(self, manifest: Union[str, Dict[str, Any], List[Dict[str, Any]]]) -> List[PolicyViolation]:
         """Enforce policy on a Kubernetes manifest.
         
         Args:
-            manifest: Kubernetes manifest as YAML string or parsed dictionary
+            manifest: Kubernetes manifest as YAML string, parsed dictionary, or list of dictionaries
             
         Returns:
             List of policy violations found
         """
         if isinstance(manifest, str):
-            manifest = self._parse_manifest(manifest)
+            manifests = self._parse_manifest(manifest)
+        elif isinstance(manifest, dict):
+            manifests = [manifest]
+        else:
+            manifests = manifest
         
-        formatted_manifest = self._format_manifest_for_prompt(manifest)
+        formatted_manifest = self._format_manifest_for_prompt(manifests)
         
         # Create query engine
         query_engine = self.policy_index.as_query_engine(
