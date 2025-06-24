@@ -8,6 +8,10 @@ metadata:
     environment: production
     team: platform
     cost-center: platform-team
+  annotations:
+    monitoring.coreos.com/enabled: "true"
+    logging.kubernetes.io/enabled: "true"
+    policy.kubernetes.io/pod-security-policy: "restricted"
 spec:
   replicas: 3  # Compliant: More than minimum 2 replicas
   strategy:
@@ -28,23 +32,26 @@ spec:
     spec:
       containers:
       - name: nginx
-        image: nginx:1.25.3  # Compliant: Using specific version
+        image: quay.io/nginx/nginx:1.25.3  # Compliant: Using approved registry (quay.io) with specific version
         resources:
           requests:  # Compliant: Meets minimum requirements
-            cpu: "500m"
-            memory: "512Mi"
-          limits:  # Compliant: Has resource limits
-            cpu: "1000m"
-            memory: "1Gi"
+            cpu: "500m"  # Above minimum 100m
+            memory: "512Mi"  # Above minimum 128Mi
+          limits:  # Compliant: Has resource limits within policy
+            cpu: "1000m"  # Under maximum 2 cores
+            memory: "1Gi"  # Under maximum 2Gi
         securityContext:  # Compliant: Has security context
           runAsUser: 1000
-          runAsNonRoot: true
-          allowPrivilegeEscalation: false
+          runAsNonRoot: true  # Compliant: Not running as root
+          allowPrivilegeEscalation: false  # Compliant: No privileged access
           capabilities:
             drop:
             - ALL
         ports:
         - containerPort: 80
+          name: http
+        - containerPort: 9113
+          name: metrics  # Compliant: Metrics port for monitoring
         livenessProbe:  # Compliant: Has health checks
           httpGet:
             path: /
@@ -61,3 +68,64 @@ spec:
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 3
+---
+# NetworkPolicy for the deployment
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nginx-network-policy
+  labels:
+    app: nginx
+    environment: production
+    team: platform
+    cost-center: platform-team
+spec:
+  podSelector:
+    matchLabels:
+      app: nginx
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          role: frontend
+    ports:
+    - protocol: TCP
+      port: 80
+  egress:
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 53  # DNS
+    - protocol: UDP
+      port: 53  # DNS
+---
+# Service for the deployment
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service
+  labels:
+    app: nginx
+    environment: production
+    team: platform
+    cost-center: platform-team
+  annotations:
+    monitoring.coreos.com/scrape: "true"
+    monitoring.coreos.com/port: "9113"
+    monitoring.coreos.com/path: "/metrics"
+spec:
+  type: ClusterIP  # Compliant: Proper service type
+  selector:
+    app: nginx
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+    protocol: TCP
+  - name: metrics
+    port: 9113
+    targetPort: metrics
+    protocol: TCP
