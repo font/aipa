@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 import uvicorn
 
@@ -16,19 +17,36 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Create FastAPI app
+# Global variable to hold the K8s policy enforcer
+k8s_enforcer = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan event handler for FastAPI app startup and shutdown."""
+    global k8s_enforcer
+    
+    # Startup: Build the RAG index once
+    logger.info("Building RAG index at startup...")
+    rag_engine.build_index()
+    
+    # Initialize K8s policy enforcer
+    k8s_enforcer = K8sPolicyEnforcer(rag_engine)
+    logger.info("API server startup complete.")
+    
+    yield
+    
+    # Shutdown: cleanup if needed
+    logger.info("API server shutting down.")
+
+
+# Create FastAPI app with lifespan handler
 app = FastAPI(
     title="AI Policy Advisor",
     description="A RAG-based policy engine using llama-stack",
     version="0.1.0",
+    lifespan=lifespan,
 )
-
-# Build the RAG index once at startup
-logger.info("Building RAG index at startup...")
-rag_engine.build_index()
-
-# Initialize K8s policy enforcer
-k8s_enforcer = K8sPolicyEnforcer(rag_engine)
 
 
 @app.post("/query", response_model=QueryResponse)
@@ -51,6 +69,13 @@ async def validate_manifest(request: ManifestValidationRequest) -> ManifestValid
     """Validate a Kubernetes manifest against policies."""
     try:
         logger.info("Received manifest validation request")
+        
+        # Ensure k8s_enforcer is initialized
+        if k8s_enforcer is None:
+            raise HTTPException(
+                status_code=503, detail="Service not ready: policy enforcer not initialized"
+            )
+        
         violations = k8s_enforcer.enforce_policy(request.manifest)
 
         # Convert PolicyViolation objects to response models
