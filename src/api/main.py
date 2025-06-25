@@ -23,6 +23,10 @@ app = FastAPI(
     version="0.1.0",
 )
 
+# Build the RAG index once at startup
+logger.info("Building RAG index at startup...")
+rag_engine.build_index()
+
 # Initialize K8s policy enforcer
 k8s_enforcer = K8sPolicyEnforcer(rag_engine)
 

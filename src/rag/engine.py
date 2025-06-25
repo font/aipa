@@ -33,37 +33,6 @@ class K8sPolicyEnforcer:
             rag_engine: RAG engine instance to use for policy queries
         """
         self.rag_engine = rag_engine
-        self.policy_index = None
-        self._build_policy_index()
-
-    def _build_policy_index(self):
-        """Build the index from policy documents."""
-        # Load policy documents
-        policy_docs = policy_loader.load_policies()
-
-        if not policy_docs:
-            logger.warning("No policy documents found.")
-            return
-
-        # Convert to LlamaIndex documents
-        documents = [
-            Document(text=doc["content"], metadata={"source": doc["source"]})
-            for doc in policy_docs
-        ]
-
-        # Create node parser
-        node_parser = SimpleNodeParser.from_defaults(
-            chunk_size=config.rag.chunk_size,
-            chunk_overlap=config.rag.chunk_overlap,
-        )
-
-        # Build the index
-        self.policy_index = VectorStoreIndex.from_documents(
-            documents,
-            node_parser=node_parser,
-        )
-
-        logger.info(f"Built policy index with {len(documents)} policy documents.")
 
     def _parse_manifest(self, manifest: str) -> List[Dict[str, Any]]:
         """Parse a Kubernetes manifest (potentially containing multiple documents).
@@ -111,6 +80,10 @@ class K8sPolicyEnforcer:
         Returns:
             List of policy violations found
         """
+        # Ensure the RAG engine's index is built (for CLI compatibility)
+        if not self.rag_engine.index:
+            self.rag_engine.build_index()
+
         if isinstance(manifest, str):
             manifests = self._parse_manifest(manifest)
         elif isinstance(manifest, dict):
@@ -120,8 +93,8 @@ class K8sPolicyEnforcer:
 
         formatted_manifest = self._format_manifest_for_prompt(manifests)
 
-        # Create query engine
-        query_engine = self.policy_index.as_query_engine(
+        # Create query engine using the RAG engine's index
+        query_engine = self.rag_engine.index.as_query_engine(
             similarity_top_k=config.rag.similarity_top_k,
         )
 
