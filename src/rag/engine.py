@@ -512,21 +512,19 @@ class RagEngine:
             logger.debug(f"Source: {node.node.metadata.get('source', 'unknown')}")
             logger.debug(f"Text: {node.node.get_text()[:100]}...")  # First 100 chars
 
-        # Format result and deduplicate sources
+        # Format result and deduplicate sources by source path only
         seen_sources = set()
         unique_sources = []
 
         for node in getattr(response, "source_nodes", []):
             source_path = node.node.metadata.get("source", "unknown")
             source_text = node.node.get_text()
-            source_key = f"{source_path}:{source_text}"
 
             logger.debug(f"Processing source: {source_path}")
-            logger.debug(f"Source key: {source_key}")
-            logger.debug(f"Already seen: {source_key in seen_sources}")
+            logger.debug(f"Already seen: {source_path in seen_sources}")
 
-            if source_key not in seen_sources:
-                seen_sources.add(source_key)
+            if source_path not in seen_sources:
+                seen_sources.add(source_path)
                 unique_sources.append({
                     "source": source_path,
                     "text": source_text
