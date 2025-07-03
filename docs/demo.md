@@ -1,5 +1,24 @@
 # Demo
 
+AIPA
+
+RAG based policy engine using natural language.
+
+Ground the LLM using Retreival Augmented Generation (RAG) by creating an index
+of the policy document by:
+
+1. Embedding: first breaks down your documents into smaller pieces called
+   Nodes.
+2. Vector Embeddings: It then creates vector embeddings (numerical
+   representations of text meaning) for each node using an LLM API.
+3. Storing in a Vector Store: These vector embeddings, along with the
+   corresponding nodes, are stored in a chosen vector store/vector database.
+
+LlamaIndex leverages various vector stores/vector databases as its underlying
+storage backend. By default, LlamaIndex uses a simple, in-memory for quick
+experimentation e.g. SimpleVectorStore, Faiss, Hnslib, etc. This can be easily
+persisted to disk.
+
 ## Setup
 
 ### System 1
